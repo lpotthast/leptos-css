@@ -19,9 +19,9 @@ one-time setup (`enable-wasm` and `install-tools`).
 
 `just verify` runs format checking, native and WASM checks, Clippy, native tests (including doc tests), and the
 warning-denied documentation build. CI additionally runs a locked release build, pins an MSRV check to Rust 1.89.0,
-and has blocking `cargo-audit` and `cargo-deny` jobs. `cargo-semver-checks` remains non-blocking until version 0.1.0
-provides a registry baseline. CI sets `RUSTFLAGS=-D warnings` globally and `RUSTDOCFLAGS=-D warnings` for
-documentation, so new compiler and Rustdoc warnings fail their respective blocking jobs.
+and has a blocking `cargo-deny` job. `cargo-semver-checks` remains non-blocking until version 0.1.0 provides a registry
+baseline. CI sets `RUSTFLAGS=-D warnings` globally and `RUSTDOCFLAGS=-D warnings` for documentation, so new compiler
+and Rustdoc warnings fail their respective blocking jobs.
 
 ## Architecture
 

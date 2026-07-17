@@ -11,7 +11,6 @@ once:
 # Install the tools this crate depends on for local development.
 install-tools:
   cargo install just
-  cargo install cargo-audit
   cargo install cargo-deny
   cargo install cargo-semver-checks
 
@@ -55,11 +54,7 @@ test-doc:
 doc:
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 
-# Scan Cargo.lock against the RustSec advisory database.
-audit:
-  cargo audit
-
-# Run cargo-deny's supply-chain checks (advisories, bans, sources).
+# Run cargo-deny's supply-chain checks (advisories, licenses, bans, sources).
 deny:
   cargo deny check
 
