@@ -12,10 +12,9 @@ use crate::CheckedCssValue;
 
 /// An owned CSS declaration whose property and value grammar were checked together.
 ///
-/// Declarations can only be constructed by the property selectors in [`crate::property`] or by
-/// a validated [`crate::CssCustomProperty`]. Their value grammars implement the sealed
-/// [`crate::CheckedCssValue`] marker. The representation is private so a property name cannot be
-/// separated from its checked value and recombined with another value.
+/// The representation is private so a property name cannot be separated from its checked value
+/// and recombined with another value. Construction is restricted to crate-owned boundaries that
+/// pair a validated name with a sealed [`crate::CheckedCssValue`] grammar.
 ///
 /// Different checked grammars and properties erase into the same storable type:
 ///

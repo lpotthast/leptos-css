@@ -58,25 +58,27 @@ upper layer, expose lower-layer implementation details, or explain how another m
 
 ### Module layout (`src/`)
 
-`lib.rs` re-exports the typed values from `value`, plus `CheckedDeclaration` and `PropertyName`. The crate root is the
-canonical import path for shared values and stored declarations; property selectors live under
-`leptos_css::property`.
+`lib.rs` is an explicit public facade. Shared values and stored declarations have one canonical import path at the
+crate root; property selectors live under `leptos_css::property`. Internal concept modules are private so adding an
+implementation detail never implicitly expands the published root API.
 
-- `value.rs` owns typed CSS primitives and closed grammars, including `CssValue`, `CssLength`, `CssDimension`,
-  `CssDimensionExpr`, colors, angles, times, `FontWeight`, box-model values, typed custom properties, `var()`, and CSS
-  math helpers. `CssWriteTo` is an open, serialization-only, zero-intermediate-allocation write path to caller-owned
-  buffers. The sealed `CheckedCssValue` marker limits checked declarations to crate-validated grammars; each new
-  concrete checked grammar must be deliberately added to the private display-and-sealing allow-list after its
-  constructors and serialization are validated. Token validity, numeric invariants, and value formatting belong here
-  rather than in higher layers.
+- `serialization.rs` owns the open, serialization-only `CssWriteTo` capability. `checked_value.rs` separately owns
+  the sealed `CheckedCssValue` eligibility boundary and the crate-private macro that opts a validated grammar into
+  checked declarations and `Display`.
+- Numeric constraints, primitive values, expression trees, and property-specific grammars each live in a concept
+  module: `number`, `length`, `angle`, `time`, `color`, `dimension`, `box_model`, `gap`, `sizing`, `touch_action`,
+  `color_adjust`, `view_transition`, `opacity`, `stacking`, and `typography`. Keep a type's constructors,
+  serialization, operators, checked registration, and focused tests with the type rather than in a horizontal
+  catch-all module.
+- `custom_property.rs` owns custom-property name validation, `CssCustomProperty<T>`, `DeclarationValue<T>`, typed
+  `var()` references, and custom-property assignment. Do not implement its inherent behavior from another module.
 - `declaration.rs` owns the unforgeable `CheckedDeclaration` boundary and its direct Leptos `IntoStyle` adapter. A
   declaration retains its checked property/value pairing even when stored heterogeneously.
-- `property.rs` owns the `#[non_exhaustive]` `PropertyName` catalog and maps variants to kebab-case CSS names with
-  `as_str()`. Extending the catalog requires a variant here; adding checked declaration support also requires the
-  property's exact grammar and a sealed selector. `PropertyName` variants are intentionally exempt from individual
-  missing-doc warnings because their names are the documentation; do not generalize that exemption. The
-  crate-private `typed_property!` macro generates selectors such as `TouchActionProperty`, whose `declare` method
-  accepts exactly that property's grammar and returns `CheckedDeclaration`.
+- `property/name.rs` generates the `#[non_exhaustive]` `PropertyName` catalog and kebab-case mapping from one table.
+  `property/selector.rs` owns the narrower checked declaration surface. Its crate-private `typed_property!` macro
+  generates inherent selector APIs such as `TouchActionProperty::declare`; there is no public generic selector trait.
+  `PropertyName` variants are intentionally exempt from individual missing-doc warnings because their names are the
+  documentation; do not generalize that exemption.
 
 ### Invariants worth preserving
 

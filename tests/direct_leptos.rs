@@ -4,9 +4,9 @@ use leptos::tachys::html::{attribute::Attribute, style::IntoStyle};
 use leptos_css::{
     BorderCornerRadius, CssColor, CssColorName, CssCustomProperty, CssDimension, CssDimensionExpr,
     ForcedColorAdjust, GlobalKeyword, Inset, LengthPercentageAuto, LengthPercentageCalculation,
-    MarginAxis, MaxSize, NonNegativeLengthPercentage, Padding, PaddingAxis, PrintColorAdjust, Size,
-    TouchAction, TouchActionGestures, TouchActionHorizontalPan, TouchActionVerticalPan,
-    ViewTransitionName, css_custom_property, pct,
+    MarginAxis, MaxSize, NonNegativeLengthPercentage, Padding, PaddingAxis, PrintColorAdjust,
+    PropertyName, Size, TouchAction, TouchActionGestures, TouchActionHorizontalPan,
+    TouchActionVerticalPan, ViewTransitionName, css_custom_property, pct,
     property::{
         AllProperty, BackgroundColorProperty, BorderStartStartRadiusProperty, ColorProperty,
         ForcedColorAdjustProperty, InsetBlockStartProperty, InsetProperty, MarginInlineProperty,
@@ -93,6 +93,11 @@ fn one_value_grammar_can_build_distinct_checked_properties() {
     let foreground = ColorProperty.declare(red);
     let background = BackgroundColorProperty.declare(red);
 
+    assert_eq!(ColorProperty.property_name(), PropertyName::Color.as_str());
+    assert_eq!(
+        BackgroundColorProperty.property_name(),
+        PropertyName::BackgroundColor.as_str()
+    );
     assert_eq!(foreground.property_name(), "color");
     assert_eq!(background.property_name(), "background-color");
     assert_ne!(foreground, background);
