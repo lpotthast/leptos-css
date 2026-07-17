@@ -64,9 +64,11 @@ canonical import path for shared values and stored declarations; property select
 
 - `value.rs` owns typed CSS primitives and closed grammars, including `CssValue`, `CssLength`, `CssDimension`,
   `CssDimensionExpr`, colors, angles, times, `FontWeight`, box-model values, typed custom properties, `var()`, and CSS
-  math helpers. `CssWriteTo` supplies a zero-intermediate-allocation write path to caller-owned buffers and the shared
-  `Display` implementations. Token validity, numeric invariants, and value formatting belong here rather than in
-  higher layers.
+  math helpers. `CssWriteTo` is an open, serialization-only, zero-intermediate-allocation write path to caller-owned
+  buffers. The sealed `CheckedCssValue` marker limits checked declarations to crate-validated grammars; each new
+  concrete checked grammar must be deliberately added to the private display-and-sealing allow-list after its
+  constructors and serialization are validated. Token validity, numeric invariants, and value formatting belong here
+  rather than in higher layers.
 - `declaration.rs` owns the unforgeable `CheckedDeclaration` boundary and its direct Leptos `IntoStyle` adapter. A
   declaration retains its checked property/value pairing even when stored heterogeneously.
 - `property.rs` owns the `#[non_exhaustive]` `PropertyName` catalog and maps variants to kebab-case CSS names with
@@ -83,9 +85,14 @@ canonical import path for shared values and stored declarations; property select
   use their fallible `try_*` counterparts for runtime-derived input.
 - `CssDimension` models only `<length-percentage>`. Grammars that permit `auto`, such as margin and inset, use
   `LengthPercentageAuto`; grammars that require non-negative direct values, such as padding and gap, use the
-  non-negative wrapper types. Do not weaken these property-specific constraints.
+  non-negative wrapper types. Range-restricted calculations remain valid because CSS clamps them after evaluation.
+  Do not weaken these property-specific constraints or reject calculations based on their unevaluated terms.
 - `CssCustomProperty<T>` validates a `--`-prefixed name and fixes one grammar `T`. `var()` accepts only a typed custom
   property plus a matching mandatory fallback. Do not add raw-name or fallback-free constructors to the checked API.
+- Preserve the checked boundary's concrete escape-hatch restrictions: `CssValue` has no arbitrary-string variant,
+  typed primitives do not implement Leptos `IntoStyleValue`, `PropertyName` does not implement `AsRef<str>`, and
+  `CheckedDeclaration` has no public raw constructor. Implementing the open `CssWriteTo` trait must not grant access
+  to `CheckedCssValue` or checked declarations.
 - Keep every public enum `#[non_exhaustive]`. Downstream-facing matches and examples must include a wildcard arm.
 - Public items must retain doc comments. `missing_docs = "warn"` becomes an error in the warning-denied Rustdoc CI job.
 - `clippy::pedantic` is denied crate-wide. The allow-list in `Cargo.toml` is deliberate; extend it only when a warning
@@ -117,6 +124,27 @@ canonical import path for shared values and stored declarations; property select
   broad list of property names.
 - Cite the normative specification in the Rustdoc for each property grammar. The Rust property selectors and grammar
   types are the source of truth; do not maintain a parallel coverage manifest unless it drives generation or tests.
-- The standards baseline is CSS Snapshot 2026 plus explicitly documented modern modules needed by public APIs, such
-  as CSS Values Level 4, CSS Sizing Level 4, CSS Environment Variables Level 1, CSS Custom Properties Level 1, and
-  CSS View Transitions Level 1. Browser support is separate from grammar validity.
+
+### Standards baseline
+
+The catalog admits a property only when it is the canonical, non-deprecated name for a general-purpose authoring
+feature and either appears in the [CSS Snapshot 2026 property index](https://www.w3.org/TR/css-2026/#properties) or
+comes from an explicitly selected modern module. The catalog and public value APIs draw on these modern modules:
+
+- [CSS Basic User Interface Level 4](https://www.w3.org/TR/css-ui-4/) for `appearance`, `pointer-events`, and
+  `user-select`;
+- [CSS Sizing Level 4](https://www.w3.org/TR/css-sizing-4/) for `aspect-ratio`;
+- [Filter Effects Level 2](https://drafts.csswg.org/filter-effects-2/) for `backdrop-filter`;
+- [CSS Overflow Level 3](https://www.w3.org/TR/css-overflow-3/) for `overflow-x`, `overflow-y`, `scroll-behavior`, and
+  `scrollbar-gutter`;
+- [CSS Overscroll Behavior Level 1](https://www.w3.org/TR/css-overscroll-1/) for the `overscroll-behavior` family;
+- [CSS Text Decoration Level 4](https://www.w3.org/TR/css-text-decor-4/) for `text-decoration-skip-ink`,
+  `text-decoration-thickness`, and `text-underline-offset`;
+- [Pointer Events Level 4](https://www.w3.org/TR/pointerevents4/) for `touch-action`;
+- [CSS Values Level 4](https://www.w3.org/TR/css-values-4/) for typed math expressions and modern dimensions;
+- [CSS Environment Variables Level 1](https://www.w3.org/TR/css-env-1/) for typed `env()` expressions;
+- [CSS Custom Properties Level 1](https://www.w3.org/TR/css-variables-1/) for typed custom properties and `var()`; and
+- [CSS View Transitions Level 1](https://www.w3.org/TR/css-view-transitions-1/) for `view-transition-name`.
+
+Legacy aliases, speech/aural properties, SVG-specific paint and rendering properties, and other niche families are
+intentionally not targets. Browser support is separate from grammar validity.

@@ -8,13 +8,14 @@ use leptos::tachys::{
     renderer::{Rndr, dom::CssStyleDeclaration, types::Element},
 };
 
-use crate::CssWriteTo;
+use crate::CheckedCssValue;
 
 /// An owned CSS declaration whose property and value grammar were checked together.
 ///
 /// Declarations can only be constructed by the property selectors in [`crate::property`] or by
-/// a validated [`crate::CssCustomProperty`]. The representation is private so a property name
-/// cannot be separated from its checked value and recombined with another value.
+/// a validated [`crate::CssCustomProperty`]. Their value grammars implement the sealed
+/// [`crate::CheckedCssValue`] marker. The representation is private so a property name cannot be
+/// separated from its checked value and recombined with another value.
 ///
 /// Different checked grammars and properties erase into the same storable type:
 ///
@@ -48,7 +49,7 @@ pub struct CheckedDeclaration {
 }
 
 impl CheckedDeclaration {
-    pub(crate) fn new(property: Cow<'static, str>, value: impl CssWriteTo) -> Self {
+    pub(crate) fn new(property: Cow<'static, str>, value: impl CheckedCssValue) -> Self {
         // Most primitive and shorthand values fit without growing this initial allocation.
         let mut rendered = String::with_capacity(32);
         value.write_to(&mut rendered);

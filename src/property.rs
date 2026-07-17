@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    BorderCornerRadius, CheckedDeclaration, CssColor, CssCustomProperty, CssWriteTo,
+    BorderCornerRadius, CheckedCssValue, CheckedDeclaration, CssColor, CssCustomProperty,
     DeclarationValue, FontWeight, ForcedColorAdjust, Gap, GapValue, GlobalKeyword, Inset,
     InsetAxis, LengthPercentageAuto, Margin, MarginAxis, MaxSize, NonNegativeLengthPercentageValue,
     Opacity, Padding, PaddingAxis, PrintColorAdjust, Size, TouchAction, ViewTransitionName, ZIndex,
@@ -13,6 +13,10 @@ use crate::{
 /// `PropertyName` does not
 /// implement `AsRef<str>` and therefore cannot be paired with an arbitrary value in a Leptos
 /// style tuple. Use this module's property-specific selectors to construct checked declarations.
+///
+/// Only canonical, modern, general-purpose property names belong in this catalog. Deprecated
+/// properties, legacy aliases, and SVG-only rendering or paint hints are intentionally omitted,
+/// even when a compatibility specification still indexes them.
 ///
 /// Variants are intentionally undocumented, as they should be self-explanatory.
 #[allow(missing_docs)]
@@ -118,7 +122,6 @@ pub enum PropertyName {
     CaptionSide,
     CaretColor,
     Clear,
-    Clip,
     ClipPath,
     Color,
     ColorScheme,
@@ -159,7 +162,6 @@ pub enum PropertyName {
     FontOpticalSizing,
     FontSize,
     FontSizeAdjust,
-    FontStretch,
     FontStyle,
     FontSynthesis,
     FontVariant,
@@ -169,6 +171,7 @@ pub enum PropertyName {
     FontVariantNumeric,
     FontVariationSettings,
     FontWeight,
+    FontWidth,
     Gap,
     Grid,
     GridArea,
@@ -267,9 +270,6 @@ pub enum PropertyName {
     PaddingLeft,
     PaddingRight,
     PaddingTop,
-    PageBreakAfter,
-    PageBreakBefore,
-    PageBreakInside,
     Perspective,
     PerspectiveOrigin,
     PlaceContent,
@@ -335,7 +335,6 @@ pub enum PropertyName {
     TextJustify,
     TextOrientation,
     TextOverflow,
-    TextRendering,
     TextShadow,
     TextTransform,
     TextUnderlineOffset,
@@ -472,7 +471,6 @@ impl PropertyName {
             Self::CaptionSide => "caption-side",
             Self::CaretColor => "caret-color",
             Self::Clear => "clear",
-            Self::Clip => "clip",
             Self::ClipPath => "clip-path",
             Self::Color => "color",
             Self::ColorScheme => "color-scheme",
@@ -513,7 +511,6 @@ impl PropertyName {
             Self::FontOpticalSizing => "font-optical-sizing",
             Self::FontSize => "font-size",
             Self::FontSizeAdjust => "font-size-adjust",
-            Self::FontStretch => "font-stretch",
             Self::FontStyle => "font-style",
             Self::FontSynthesis => "font-synthesis",
             Self::FontVariant => "font-variant",
@@ -523,6 +520,7 @@ impl PropertyName {
             Self::FontVariantNumeric => "font-variant-numeric",
             Self::FontVariationSettings => "font-variation-settings",
             Self::FontWeight => "font-weight",
+            Self::FontWidth => "font-width",
             Self::Gap => "gap",
             Self::Grid => "grid",
             Self::GridArea => "grid-area",
@@ -621,9 +619,6 @@ impl PropertyName {
             Self::PaddingLeft => "padding-left",
             Self::PaddingRight => "padding-right",
             Self::PaddingTop => "padding-top",
-            Self::PageBreakAfter => "page-break-after",
-            Self::PageBreakBefore => "page-break-before",
-            Self::PageBreakInside => "page-break-inside",
             Self::Perspective => "perspective",
             Self::PerspectiveOrigin => "perspective-origin",
             Self::PlaceContent => "place-content",
@@ -689,7 +684,6 @@ impl PropertyName {
             Self::TextJustify => "text-justify",
             Self::TextOrientation => "text-orientation",
             Self::TextOverflow => "text-overflow",
-            Self::TextRendering => "text-rendering",
             Self::TextShadow => "text-shadow",
             Self::TextTransform => "text-transform",
             Self::TextUnderlineOffset => "text-underline-offset",
@@ -757,7 +751,7 @@ mod sealed {
 /// ```
 pub trait CheckedProperty: sealed::Sealed + Clone + Send + Sync + 'static {
     /// The value grammar accepted by this property.
-    type Value: CssWriteTo;
+    type Value: CheckedCssValue;
 
     /// Return the CSS property name selected by this value.
     fn property_name(&self) -> &str;
@@ -828,7 +822,7 @@ macro_rules! typed_property {
 
 impl<T> CssCustomProperty<T>
 where
-    T: CssWriteTo + 'static,
+    T: CheckedCssValue + 'static,
 {
     /// Create a typed declaration assigning this custom property a checked value.
     ///
@@ -846,7 +840,7 @@ impl<T> sealed::Sealed for CssCustomProperty<T> {}
 
 impl<T> CheckedProperty for CssCustomProperty<T>
 where
-    T: CssWriteTo + 'static,
+    T: CheckedCssValue + 'static,
 {
     type Value = T;
 

@@ -1,9 +1,47 @@
 use std::{borrow::Cow, fmt, marker::PhantomData};
 
-/// Trait for CSS types that can write their representation to any `fmt::Write` target.
+/// Open serialization trait for CSS-like values.
 ///
 /// This powers both [`fmt::Display`]-style formatting and the zero-allocation
-/// [`write_to`](CssWriteTo::write_to) method through a single implementation.
+/// [`write_to`](CssWriteTo::write_to) method through a single implementation. Downstream types
+/// may implement this trait for application-specific serialization, but doing so does not make a
+/// type eligible for checked declarations; that capability is represented by the sealed
+/// [`CheckedCssValue`] trait.
+///
+/// ```rust
+/// use std::fmt;
+/// use leptos_css::CssWriteTo;
+///
+/// struct ExternalValue(&'static str);
+///
+/// impl CssWriteTo for ExternalValue {
+///     fn css_fmt<W: fmt::Write>(&self, output: &mut W) -> fmt::Result {
+///         output.write_str(self.0)
+///     }
+/// }
+///
+/// let mut output = String::new();
+/// ExternalValue("application-specific").write_to(&mut output);
+/// assert_eq!(output, "application-specific");
+/// ```
+///
+/// Serialization alone cannot enter the checked custom-property API:
+///
+/// ```compile_fail
+/// use std::fmt;
+/// use leptos_css::{CssCustomProperty, CssWriteTo};
+///
+/// struct Raw(&'static str);
+///
+/// impl CssWriteTo for Raw {
+///     fn css_fmt<W: fmt::Write>(&self, output: &mut W) -> fmt::Result {
+///         output.write_str(self.0)
+///     }
+/// }
+///
+/// let property = CssCustomProperty::<Raw>::new("--unsafe");
+/// let _ = property.declare(Raw("red;color:lime"));
+/// ```
 pub trait CssWriteTo {
     /// Write the CSS representation to a `fmt::Write` target.
     fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result;
@@ -16,13 +54,46 @@ pub trait CssWriteTo {
     }
 }
 
-macro_rules! impl_display_via_css_fmt {
+mod checked_css_value {
+    pub trait Sealed {}
+}
+
+/// A crate-validated CSS value grammar eligible for checked declarations.
+///
+/// This trait is sealed. Downstream types may implement [`CssWriteTo`] for serialization, but
+/// only crate-owned closed grammars implement this trait. Implementations have no methods; the
+/// trait grants access to typed custom properties, [`var`], property selectors, and
+/// [`crate::CheckedDeclaration`] construction.
+///
+/// External code cannot opt a serializer into the checked boundary:
+///
+/// ```compile_fail
+/// use std::fmt;
+/// use leptos_css::{CheckedCssValue, CssWriteTo};
+///
+/// struct ExternalValue;
+///
+/// impl CssWriteTo for ExternalValue {
+///     fn css_fmt<W: fmt::Write>(&self, _output: &mut W) -> fmt::Result {
+///         Ok(())
+///     }
+/// }
+///
+/// impl CheckedCssValue for ExternalValue {}
+/// ```
+pub trait CheckedCssValue: CssWriteTo + checked_css_value::Sealed {}
+
+impl<T> CheckedCssValue for T where T: CssWriteTo + checked_css_value::Sealed {}
+
+macro_rules! impl_checked_display_via_css_fmt {
     ($($ty:ty),+ $(,)?) => {$(
         impl fmt::Display for $ty {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 self.css_fmt(f)
             }
         }
+
+        impl checked_css_value::Sealed for $ty {}
     )+};
 }
 
@@ -111,7 +182,8 @@ const fn is_checked_custom_property_name(name: &str) -> bool {
 /// The type parameter prevents ordinary checked code from using, for example, a color variable
 /// as a size. The same CSS name must not be independently constructed with two different Rust
 /// grammar types; conflicting handwritten or external declarations are outside this crate's
-/// checked boundary.
+/// checked boundary. Constructors are available only when `T` implements the sealed
+/// [`CheckedCssValue`] marker.
 ///
 /// [CSS Custom Properties Level 1]: https://www.w3.org/TR/css-variables-1/
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -129,7 +201,7 @@ impl<T> Clone for CssCustomProperty<T> {
     }
 }
 
-impl<T> CssCustomProperty<T> {
+impl<T: CheckedCssValue> CssCustomProperty<T> {
     /// Construct a checked custom property from a static name.
     ///
     /// This constructor is const and therefore suitable for module-level declarations. Prefer the
@@ -214,7 +286,7 @@ macro_rules! css_custom_property {
     };
 }
 
-impl<T> fmt::Display for CssCustomProperty<T> {
+impl<T: CheckedCssValue> fmt::Display for CssCustomProperty<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -223,7 +295,8 @@ impl<T> fmt::Display for CssCustomProperty<T> {
 /// A checked literal or a typed custom-property reference for one CSS grammar.
 ///
 /// The representation is private so callers cannot construct an untyped variable reference or
-/// raw fallback token stream.
+/// raw fallback token stream. Public conversions are available only for [`CheckedCssValue`]
+/// grammars.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeclarationValue<T>(DeclarationValueKind<T>);
 
@@ -233,7 +306,7 @@ enum DeclarationValueKind<T> {
     Variable(CssVariableReference<T>),
 }
 
-impl<T> From<T> for DeclarationValue<T> {
+impl<T: CheckedCssValue> From<T> for DeclarationValue<T> {
     fn from(value: T) -> Self {
         Self(DeclarationValueKind::Literal(value))
     }
@@ -246,13 +319,17 @@ pub struct CssVariableReference<T> {
     fallback: Box<DeclarationValue<T>>,
 }
 
-impl<T> From<CssVariableReference<T>> for DeclarationValue<T> {
+impl<T: CheckedCssValue> From<CssVariableReference<T>> for DeclarationValue<T> {
     fn from(value: CssVariableReference<T>) -> Self {
         Self(DeclarationValueKind::Variable(value))
     }
 }
 
-impl<T: CssWriteTo> CssWriteTo for DeclarationValue<T> {
+impl<T: CheckedCssValue> checked_css_value::Sealed for DeclarationValue<T> {}
+
+impl<T: CheckedCssValue> checked_css_value::Sealed for CssVariableReference<T> {}
+
+impl<T: CheckedCssValue> CssWriteTo for DeclarationValue<T> {
     fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
         match &self.0 {
             DeclarationValueKind::Literal(value) => value.css_fmt(w),
@@ -261,7 +338,7 @@ impl<T: CssWriteTo> CssWriteTo for DeclarationValue<T> {
     }
 }
 
-impl<T: CssWriteTo> CssWriteTo for CssVariableReference<T> {
+impl<T: CheckedCssValue> CssWriteTo for CssVariableReference<T> {
     fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
         write!(w, "var({}, ", self.property)?;
         self.fallback.css_fmt(w)?;
@@ -269,13 +346,13 @@ impl<T: CssWriteTo> CssWriteTo for CssVariableReference<T> {
     }
 }
 
-impl<T: CssWriteTo> fmt::Display for DeclarationValue<T> {
+impl<T: CheckedCssValue> fmt::Display for DeclarationValue<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.css_fmt(f)
     }
 }
 
-impl<T: CssWriteTo> fmt::Display for CssVariableReference<T> {
+impl<T: CheckedCssValue> fmt::Display for CssVariableReference<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.css_fmt(f)
     }
@@ -285,9 +362,19 @@ impl<T: CssWriteTo> fmt::Display for CssVariableReference<T> {
 ///
 /// Requiring a fallback prevents an undefined custom property from invalidating the consuming
 /// declaration at computed-value time. The fallback may itself be another typed `var()` result.
+/// Both the property grammar and fallback must implement the sealed [`CheckedCssValue`] marker;
+/// [`CssWriteTo`] alone is only a serialization capability.
+///
+/// ```compile_fail
+/// use leptos_css::{CssCustomProperty, CssWriteTo, var};
+///
+/// fn reference<T: CssWriteTo>(property: &CssCustomProperty<T>, fallback: T) {
+///     let _ = var(property, fallback);
+/// }
+/// ```
 ///
 /// [CSS variable substitution]: https://www.w3.org/TR/css-variables-1/#using-variables
-pub fn var<T>(
+pub fn var<T: CheckedCssValue>(
     property: &CssCustomProperty<T>,
     fallback: impl Into<DeclarationValue<T>>,
 ) -> CssVariableReference<T> {
@@ -1883,8 +1970,8 @@ impl CssWriteTo for Gap {
 
 /// Values supported by the typed `width`, `height`, and minimum-size property APIs.
 ///
-/// The `stretch` extension follows CSS Sizing Level 4; the remaining variants are defined by
-/// CSS Sizing Level 3.
+/// The `stretch`, bare `fit-content`, and `contain` keywords extend the CSS Sizing Level 3
+/// grammar as defined by CSS Sizing Level 4.
 ///
 /// [CSS Sizing Level 3]: https://www.w3.org/TR/css-sizing-3/#sizing-values
 /// [CSS Sizing Level 4]: https://www.w3.org/TR/css-sizing-4/#sizing-values
@@ -1901,10 +1988,14 @@ pub enum Size {
     MinContent,
     /// The `max-content` keyword.
     MaxContent,
+    /// The bare `fit-content` keyword.
+    FitContent,
     /// The `fit-content()` function with a non-negative argument.
-    FitContent(NonNegativeLengthPercentageValue),
+    FitContentFunction(NonNegativeLengthPercentageValue),
     /// The `stretch` keyword.
     Stretch,
+    /// The `contain` keyword.
+    Contain,
 }
 
 impl From<NonNegativeLengthPercentage> for Size {
@@ -1916,12 +2007,12 @@ impl From<NonNegativeLengthPercentage> for Size {
 impl Size {
     /// Construct `fit-content()` with a directly non-negative argument.
     pub fn fit_content(value: CssDimension) -> Self {
-        Self::FitContent(NonNegativeLengthPercentage::new(value).into())
+        Self::FitContentFunction(NonNegativeLengthPercentage::new(value).into())
     }
 
     /// Construct `fit-content()` with a typed calculation.
     pub fn fit_content_calculated(expression: impl Into<CssDimensionExpr>) -> Self {
-        Self::FitContent(LengthPercentageCalculation::new(expression).into())
+        Self::FitContentFunction(LengthPercentageCalculation::new(expression).into())
     }
 }
 
@@ -1933,19 +2024,22 @@ impl CssWriteTo for Size {
             Self::Calculation(value) => value.css_fmt(w),
             Self::MinContent => w.write_str("min-content"),
             Self::MaxContent => w.write_str("max-content"),
-            Self::FitContent(value) => {
+            Self::FitContent => w.write_str("fit-content"),
+            Self::FitContentFunction(value) => {
                 w.write_str("fit-content(")?;
                 value.css_fmt(w)?;
                 w.write_char(')')
             }
             Self::Stretch => w.write_str("stretch"),
+            Self::Contain => w.write_str("contain"),
         }
     }
 }
 
 /// Values supported by the typed maximum-size property APIs.
 ///
-/// The `stretch` extension follows CSS Sizing Level 4.
+/// The `stretch`, bare `fit-content`, and `contain` keywords extend the CSS Sizing Level 3
+/// grammar as defined by CSS Sizing Level 4.
 ///
 /// [CSS Sizing Level 3]: https://www.w3.org/TR/css-sizing-3/#sizing-values
 /// [CSS Sizing Level 4]: https://www.w3.org/TR/css-sizing-4/#sizing-values
@@ -1962,10 +2056,14 @@ pub enum MaxSize {
     MinContent,
     /// The `max-content` keyword.
     MaxContent,
+    /// The bare `fit-content` keyword.
+    FitContent,
     /// The `fit-content()` function with a non-negative argument.
-    FitContent(NonNegativeLengthPercentageValue),
+    FitContentFunction(NonNegativeLengthPercentageValue),
     /// The `stretch` keyword.
     Stretch,
+    /// The `contain` keyword.
+    Contain,
 }
 
 impl From<NonNegativeLengthPercentage> for MaxSize {
@@ -1977,12 +2075,12 @@ impl From<NonNegativeLengthPercentage> for MaxSize {
 impl MaxSize {
     /// Construct `fit-content()` with a directly non-negative argument.
     pub fn fit_content(value: CssDimension) -> Self {
-        Self::FitContent(NonNegativeLengthPercentage::new(value).into())
+        Self::FitContentFunction(NonNegativeLengthPercentage::new(value).into())
     }
 
     /// Construct `fit-content()` with a typed calculation.
     pub fn fit_content_calculated(expression: impl Into<CssDimensionExpr>) -> Self {
-        Self::FitContent(LengthPercentageCalculation::new(expression).into())
+        Self::FitContentFunction(LengthPercentageCalculation::new(expression).into())
     }
 }
 
@@ -1994,19 +2092,164 @@ impl CssWriteTo for MaxSize {
             Self::Calculation(value) => value.css_fmt(w),
             Self::MinContent => w.write_str("min-content"),
             Self::MaxContent => w.write_str("max-content"),
-            Self::FitContent(value) => {
+            Self::FitContent => w.write_str("fit-content"),
+            Self::FitContentFunction(value) => {
                 w.write_str("fit-content(")?;
                 value.css_fmt(w)?;
                 w.write_char(')')
             }
             Self::Stretch => w.write_str("stretch"),
+            Self::Contain => w.write_str("contain"),
         }
+    }
+}
+
+/// A horizontal panning component of the `touch-action` grammar.
+///
+/// [Pointer Events Level 4 `touch-action` grammar]: https://www.w3.org/TR/pointerevents4/#the-touch-action-css-property
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TouchActionHorizontalPan {
+    /// `pan-x`.
+    PanX,
+    /// `pan-left`.
+    PanLeft,
+    /// `pan-right`.
+    PanRight,
+}
+
+impl CssWriteTo for TouchActionHorizontalPan {
+    fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
+        w.write_str(match self {
+            Self::PanX => "pan-x",
+            Self::PanLeft => "pan-left",
+            Self::PanRight => "pan-right",
+        })
+    }
+}
+
+/// A vertical panning component of the `touch-action` grammar.
+///
+/// [Pointer Events Level 4 `touch-action` grammar]: https://www.w3.org/TR/pointerevents4/#the-touch-action-css-property
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TouchActionVerticalPan {
+    /// `pan-y`.
+    PanY,
+    /// `pan-up`.
+    PanUp,
+    /// `pan-down`.
+    PanDown,
+}
+
+impl CssWriteTo for TouchActionVerticalPan {
+    fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
+        w.write_str(match self {
+            Self::PanY => "pan-y",
+            Self::PanUp => "pan-up",
+            Self::PanDown => "pan-down",
+        })
+    }
+}
+
+/// A non-empty composition of panning and pinch-zoom gestures for `touch-action`.
+///
+/// Horizontal and vertical panning come from Pointer Events Level 4. The WHATWG Compatibility
+/// Standard augments that grammar with the independently composable `pinch-zoom` keyword.
+///
+/// [Pointer Events Level 4 `touch-action` grammar]: https://www.w3.org/TR/pointerevents4/#the-touch-action-css-property
+/// [WHATWG Compatibility `touch-action` extension]: https://compat.spec.whatwg.org/#touch-action
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TouchActionGestures {
+    horizontal: Option<TouchActionHorizontalPan>,
+    vertical: Option<TouchActionVerticalPan>,
+    pinch_zoom: bool,
+}
+
+impl TouchActionGestures {
+    /// Start a gesture composition with horizontal panning.
+    pub const fn horizontal(horizontal: TouchActionHorizontalPan) -> Self {
+        Self {
+            horizontal: Some(horizontal),
+            vertical: None,
+            pinch_zoom: false,
+        }
+    }
+
+    /// Start a gesture composition with vertical panning.
+    pub const fn vertical(vertical: TouchActionVerticalPan) -> Self {
+        Self {
+            horizontal: None,
+            vertical: Some(vertical),
+            pinch_zoom: false,
+        }
+    }
+
+    /// Start a gesture composition with pinch zooming.
+    pub const fn pinch_zoom() -> Self {
+        Self {
+            horizontal: None,
+            vertical: None,
+            pinch_zoom: true,
+        }
+    }
+
+    /// Add or replace the horizontal panning component.
+    #[must_use]
+    pub const fn with_horizontal(mut self, horizontal: TouchActionHorizontalPan) -> Self {
+        self.horizontal = Some(horizontal);
+        self
+    }
+
+    /// Add or replace the vertical panning component.
+    #[must_use]
+    pub const fn with_vertical(mut self, vertical: TouchActionVerticalPan) -> Self {
+        self.vertical = Some(vertical);
+        self
+    }
+
+    /// Add pinch zooming to the gesture composition.
+    #[must_use]
+    pub const fn with_pinch_zoom(mut self) -> Self {
+        self.pinch_zoom = true;
+        self
+    }
+}
+
+impl CssWriteTo for TouchActionGestures {
+    fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
+        let mut has_previous = false;
+
+        if let Some(horizontal) = self.horizontal {
+            horizontal.css_fmt(w)?;
+            has_previous = true;
+        }
+        if let Some(vertical) = self.vertical {
+            if has_previous {
+                w.write_char(' ')?;
+            }
+            vertical.css_fmt(w)?;
+            has_previous = true;
+        }
+        if self.pinch_zoom {
+            if has_previous {
+                w.write_char(' ')?;
+            }
+            w.write_str("pinch-zoom")?;
+        }
+
+        Ok(())
     }
 }
 
 /// A standards-valid `touch-action` value.
 ///
-/// [Pointer Events touch-action grammar]: https://www.w3.org/TR/pointerevents3/#the-touch-action-css-property
+/// Pointer Events Level 4 defines the property keywords and the horizontal and vertical panning
+/// components. The WHATWG Compatibility Standard adds `pinch-zoom` to the composable gesture
+/// branch represented by [`TouchActionGestures`].
+///
+/// [Pointer Events Level 4 `touch-action` grammar]: https://www.w3.org/TR/pointerevents4/#the-touch-action-css-property
+/// [WHATWG Compatibility `touch-action` extension]: https://compat.spec.whatwg.org/#touch-action
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TouchAction {
@@ -2016,36 +2259,24 @@ pub enum TouchAction {
     None,
     /// `manipulation`.
     Manipulation,
-    /// `pan-x`.
-    PanX,
-    /// `pan-y`.
-    PanY,
-    /// `pinch-zoom`.
-    PinchZoom,
-    /// `pan-x pan-y`.
-    PanXPanY,
-    /// `pan-x pinch-zoom`.
-    PanXPinchZoom,
-    /// `pan-y pinch-zoom`.
-    PanYPinchZoom,
-    /// `pan-x pan-y pinch-zoom`.
-    PanXPanYPinchZoom,
+    /// A non-empty combination of horizontal panning, vertical panning, and pinch zooming.
+    Gestures(TouchActionGestures),
+}
+
+impl From<TouchActionGestures> for TouchAction {
+    fn from(value: TouchActionGestures) -> Self {
+        Self::Gestures(value)
+    }
 }
 
 impl CssWriteTo for TouchAction {
     fn css_fmt<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
-        w.write_str(match self {
-            Self::Auto => "auto",
-            Self::None => "none",
-            Self::Manipulation => "manipulation",
-            Self::PanX => "pan-x",
-            Self::PanY => "pan-y",
-            Self::PinchZoom => "pinch-zoom",
-            Self::PanXPanY => "pan-x pan-y",
-            Self::PanXPinchZoom => "pan-x pinch-zoom",
-            Self::PanYPinchZoom => "pan-y pinch-zoom",
-            Self::PanXPanYPinchZoom => "pan-x pan-y pinch-zoom",
-        })
+        match self {
+            Self::Auto => w.write_str("auto"),
+            Self::None => w.write_str("none"),
+            Self::Manipulation => w.write_str("manipulation"),
+            Self::Gestures(value) => value.css_fmt(w),
+        }
     }
 }
 
@@ -2236,7 +2467,7 @@ impl CssWriteTo for ZIndex {
     }
 }
 
-impl_display_via_css_fmt!(
+impl_checked_display_via_css_fmt!(
     CssLength,
     CssAngle,
     CssTime,
@@ -2260,6 +2491,9 @@ impl_display_via_css_fmt!(
     BorderCornerRadius,
     Size,
     MaxSize,
+    TouchActionHorizontalPan,
+    TouchActionVerticalPan,
+    TouchActionGestures,
     TouchAction,
     ForcedColorAdjust,
     PrintColorAdjust,
@@ -3095,6 +3329,52 @@ mod tests {
     }
 
     #[test]
+    fn test_touch_action_gesture_composition_covers_normative_grammar() {
+        assertr::assert_that!(TouchAction::Auto.to_string()).is_equal_to("auto".to_string());
+        assertr::assert_that!(TouchAction::None.to_string()).is_equal_to("none".to_string());
+        assertr::assert_that!(TouchAction::Manipulation.to_string())
+            .is_equal_to("manipulation".to_string());
+
+        let horizontal = [
+            (TouchActionHorizontalPan::PanX, "pan-x"),
+            (TouchActionHorizontalPan::PanLeft, "pan-left"),
+            (TouchActionHorizontalPan::PanRight, "pan-right"),
+        ];
+        let vertical = [
+            (TouchActionVerticalPan::PanY, "pan-y"),
+            (TouchActionVerticalPan::PanUp, "pan-up"),
+            (TouchActionVerticalPan::PanDown, "pan-down"),
+        ];
+
+        for (horizontal, expected_horizontal) in horizontal {
+            let gestures = TouchActionGestures::horizontal(horizontal);
+            assertr::assert_that!(gestures.to_string())
+                .is_equal_to(expected_horizontal.to_string());
+            assertr::assert_that!(gestures.with_pinch_zoom().to_string())
+                .is_equal_to(format!("{expected_horizontal} pinch-zoom"));
+
+            for (vertical, expected_vertical) in vertical {
+                let gestures = gestures.with_vertical(vertical);
+                assertr::assert_that!(gestures.to_string())
+                    .is_equal_to(format!("{expected_horizontal} {expected_vertical}"));
+                assertr::assert_that!(gestures.with_pinch_zoom().to_string()).is_equal_to(format!(
+                    "{expected_horizontal} {expected_vertical} pinch-zoom"
+                ));
+            }
+        }
+
+        for (vertical, expected_vertical) in vertical {
+            let gestures = TouchActionGestures::vertical(vertical);
+            assertr::assert_that!(gestures.to_string()).is_equal_to(expected_vertical.to_string());
+            assertr::assert_that!(gestures.with_pinch_zoom().to_string())
+                .is_equal_to(format!("{expected_vertical} pinch-zoom"));
+        }
+
+        assertr::assert_that!(TouchActionGestures::pinch_zoom().to_string())
+            .is_equal_to("pinch-zoom".to_string());
+    }
+
+    #[test]
     fn test_from_i32() {
         let v: CssValue = 42_i32.into();
         assertr::assert_that!(v.to_string()).is_equal_to("42".to_string());
@@ -3192,11 +3472,23 @@ mod tests {
     }
 
     #[test]
-    fn test_sizing_fit_content_and_logical_corner_radius() {
+    fn test_sizing_level_four_keywords_and_fit_content_functions() {
+        assertr::assert_that!(Size::Stretch.to_string()).is_equal_to("stretch".to_string());
+        assertr::assert_that!(Size::FitContent.to_string()).is_equal_to("fit-content".to_string());
+        assertr::assert_that!(Size::Contain.to_string()).is_equal_to("contain".to_string());
         assertr::assert_that!(Size::fit_content(px(320)).to_string())
             .is_equal_to("fit-content(320px)".to_string());
+
+        assertr::assert_that!(MaxSize::Stretch.to_string()).is_equal_to("stretch".to_string());
+        assertr::assert_that!(MaxSize::FitContent.to_string())
+            .is_equal_to("fit-content".to_string());
+        assertr::assert_that!(MaxSize::Contain.to_string()).is_equal_to("contain".to_string());
         assertr::assert_that!(MaxSize::fit_content_calculated(pct(100) - px(20)).to_string())
             .is_equal_to("fit-content(calc(100% - 20px))".to_string());
+    }
+
+    #[test]
+    fn test_logical_corner_radius() {
         assertr::assert_that!(BorderCornerRadius::elliptical(px(8), pct(50)).to_string())
             .is_equal_to("8px 50%".to_string());
     }

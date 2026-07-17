@@ -4,13 +4,14 @@ use leptos::tachys::html::{attribute::Attribute, style::IntoStyle};
 use leptos_css::{
     BorderCornerRadius, CssColor, CssColorName, CssCustomProperty, CssDimension, CssDimensionExpr,
     ForcedColorAdjust, GlobalKeyword, Inset, LengthPercentageAuto, LengthPercentageCalculation,
-    MarginAxis, NonNegativeLengthPercentage, Padding, PaddingAxis, PrintColorAdjust, Size,
-    TouchAction, ViewTransitionName, css_custom_property, pct,
+    MarginAxis, MaxSize, NonNegativeLengthPercentage, Padding, PaddingAxis, PrintColorAdjust, Size,
+    TouchAction, TouchActionGestures, TouchActionHorizontalPan, TouchActionVerticalPan,
+    ViewTransitionName, css_custom_property, pct,
     property::{
         AllProperty, BackgroundColorProperty, BorderStartStartRadiusProperty, ColorProperty,
         ForcedColorAdjustProperty, InsetBlockStartProperty, InsetProperty, MarginInlineProperty,
-        PaddingBlockProperty, PaddingProperty, PrintColorAdjustProperty, TouchActionProperty,
-        ViewTransitionNameProperty, WidthProperty,
+        MaxWidthProperty, MinWidthProperty, PaddingBlockProperty, PaddingProperty,
+        PrintColorAdjustProperty, TouchActionProperty, ViewTransitionNameProperty, WidthProperty,
     },
     px, rgb, var,
 };
@@ -51,11 +52,14 @@ fn ordinary_property_marker_accepts_global_through_separate_method() {
 
 #[test]
 fn typed_property_marker_accepts_its_exact_grammar_during_ssr() {
-    let attribute = TouchActionProperty.declare(TouchAction::PanXPanYPinchZoom);
+    let gestures = TouchActionGestures::horizontal(TouchActionHorizontalPan::PanLeft)
+        .with_vertical(TouchActionVerticalPan::PanUp)
+        .with_pinch_zoom();
+    let attribute = TouchActionProperty.declare(TouchAction::Gestures(gestures));
 
     assert_eq!(
         render_style(attribute),
-        "touch-action:pan-x pan-y pinch-zoom;"
+        "touch-action:pan-left pan-up pinch-zoom;"
     );
 }
 
@@ -70,6 +74,17 @@ fn property_markers_render_checked_values_and_typed_expressions() {
     assert_eq!(padding, "padding:16px;");
     assert_eq!(width, "width:calc(100% - 20px);");
     assert_eq!(color, "color:red;");
+}
+
+#[test]
+fn sizing_level_four_keywords_render_for_preferred_minimum_and_maximum_properties() {
+    let preferred = render_style(WidthProperty.declare(Size::FitContent));
+    let minimum = render_style(MinWidthProperty.declare(Size::Contain));
+    let maximum = render_style(MaxWidthProperty.declare(MaxSize::Stretch));
+
+    assert_eq!(preferred, "width:fit-content;");
+    assert_eq!(minimum, "min-width:contain;");
+    assert_eq!(maximum, "max-width:stretch;");
 }
 
 #[test]
@@ -111,13 +126,58 @@ fn longhand_marker_accepts_only_non_negative_length_percentage() {
 #[test]
 fn typed_custom_properties_and_var_render_during_ssr() {
     let declaration = render_style(ACCENT_COLOR.declare(CssColor::Named(CssColorName::Aqua)));
+    let runtime_accent = CssCustomProperty::<CssColor>::new("--runtime-accent-color");
+    let runtime_declaration =
+        render_style(runtime_accent.declare(CssColor::Named(CssColorName::Red)));
     let reference = render_style(ColorProperty.declare(var(
         &ACCENT_COLOR,
         CssColor::Named(CssColorName::CurrentColor),
     )));
 
     assert_eq!(declaration, "--accent-color:aqua;");
+    assert_eq!(runtime_declaration, "--runtime-accent-color:red;");
     assert_eq!(reference, "color:var(--accent-color, currentcolor);");
+}
+
+#[test]
+fn sizing_and_touch_action_grammars_can_type_custom_properties() {
+    let preferred_size = CssCustomProperty::<Size>::new("--preferred-size");
+    let maximum_size = CssCustomProperty::<MaxSize>::new("--maximum-size");
+    let horizontal_pan = CssCustomProperty::<TouchActionHorizontalPan>::new("--horizontal-pan");
+    let vertical_pan = CssCustomProperty::<TouchActionVerticalPan>::new("--vertical-pan");
+    let gestures = CssCustomProperty::<TouchActionGestures>::new("--gestures");
+    let touch_action = CssCustomProperty::<TouchAction>::new("--touch-action");
+
+    assert_eq!(
+        render_style(preferred_size.declare(Size::FitContent)),
+        "--preferred-size:fit-content;"
+    );
+    assert_eq!(
+        render_style(maximum_size.declare(MaxSize::Contain)),
+        "--maximum-size:contain;"
+    );
+    assert_eq!(
+        render_style(horizontal_pan.declare(TouchActionHorizontalPan::PanLeft)),
+        "--horizontal-pan:pan-left;"
+    );
+    assert_eq!(
+        render_style(vertical_pan.declare(TouchActionVerticalPan::PanUp)),
+        "--vertical-pan:pan-up;"
+    );
+    assert_eq!(
+        render_style(
+            gestures.declare(
+                TouchActionGestures::horizontal(TouchActionHorizontalPan::PanX)
+                    .with_vertical(TouchActionVerticalPan::PanY)
+                    .with_pinch_zoom()
+            )
+        ),
+        "--gestures:pan-x pan-y pinch-zoom;"
+    );
+    assert_eq!(
+        render_style(touch_action.declare(TouchAction::Manipulation)),
+        "--touch-action:manipulation;"
+    );
 }
 
 #[test]
